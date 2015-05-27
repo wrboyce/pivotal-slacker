@@ -87,11 +87,26 @@ end
 
 # Shared functionality for outputting lists of stories (e.g. for `mine`, `started`, etc.).
 # Handles menuing functionality if opts[:menu] is `true`.
-def output_story_list opts={:project => nil, :states => [], :owned_by => nil, :menu => false}
-  puts "Looking for stories owned by #{opts[:owned_by]} in states: #{opts[:states]}".color("#444444")
+def output_story_list opts={:project => nil, :states => [], :owned_by => false, :menu => false, :labels => nil}
+  if opts[:owned_by].nil?
+    msg = "Looking for unclaimed stories in states: #{opts[:states]}"
+    args = {:current_state => opts[:states]}
+    if not (opts[:labels].nil? or opts[:labels].empty?)
+      msg += " and labels: #{opts[:labels]}"
+      msg = msg.color("#444444")
+      args[:search] = "current_state:#{opts[:states].join(',')}"
+      for label in opts[:labels]
+        args[:search] += " label:#{label}"
+      end
+    end
+    puts msg
+    stories = opts[:project].stories.all(args).select { |s| s.owned_by == nil }.reverse
+  else
+    puts "Looking for stories owned by #{opts[:owned_by]} in states: #{opts[:states]}".color("#444444")
+    stories = opts[:project].stories.all(:owned_by => opts[:owned_by], :current_state => opts[:states])
+    stories.sort! { |a, b| a.created_at <=> b.created_at }
+  end
 
-  stories = opts[:project].stories.all(:owned_by => opts[:owned_by], :current_state => opts[:states])
-  stories.sort! { |a, b| a.created_at <=> b.created_at }
   menu_number = 1  # Only used when --menu specified.
   stories.each do |story|
     id = Formatter.story_id(story.id)
@@ -123,6 +138,30 @@ end
 # Command-line interaction functionality
 
 def define_commands
+  command :available do |c|
+    c.syntax = "pivotal-slacker available <label> <label>"
+    c.description = "List all unclaimed stories."
+    c.example "List available stories", "pivotal-slacker available"
+    c.action do |args, options|
+      states = %w{unstarted}
+      owned_by = nil
+
+      output_story_list :project => $project, :states => states, :owned_by => owned_by, :menu => options.menu, :labels => args
+    end
+  end
+
+  command :claim do |c|
+    c.syntax = "pivotal-slacker claim story_id"
+    c.description = "Claim ownership of a specific story."
+    c.example "Claim a story with ID 123", "pivotal-slacker claim 123"
+    c.action do |args, options|
+      story_id = normalize_story_id(args[0].to_i)
+      story = $project.stories.find(story_id)
+
+      story.update :owned_by => $config.user
+    end
+  end
+
   command :mine do |c|
     c.syntax = "pivotal-slacker mine"
     c.description = "List your stories in Pivotal Tracker."
